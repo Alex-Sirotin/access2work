@@ -6,6 +6,7 @@ from pathlib import Path
 import pyotp
 import requests
 from dotenv import load_dotenv
+import psutil
 
 load_dotenv()
 
@@ -77,7 +78,14 @@ def decrypt_secret(path):
         return result.stdout.strip()
     return Path(path).read_text().strip()
 
-def connect_vpn(vpn, initial_ip):
+def find_free_tun(start=0, max_search=10):
+    for i in range(start, start + max_search):
+        name = f"tun{i}"
+        if not any(name in iface for iface in psutil.net_if_addrs()):
+            return name
+    return None
+
+def connect_vpn(vpn, initial_ip, index):
     ovpn_path = f"{PROFILE_DIR}/{vpn['Name']}.ovpn"
     if not Path(ovpn_path).exists():
         log_event(f"[{vpn['Name']}] ⚠️ Профиль {ovpn_path} не найден — пропуск")
@@ -87,12 +95,8 @@ def connect_vpn(vpn, initial_ip):
     if not secret:
         return False
 
-    cmd = ["openvpn", "--config", ovpn_path]
-    log_event(f"[{vpn['Name']}] 🔌 Запуск OpenVPN:\n{' '.join(cmd)}")
-
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-
     for attempt in range(1, MAX_RETRIES + 1):
+        otp_time = time.time()
         otp = pyotp.TOTP(secret).now()
         password = vpn.get("Prefix", "") + otp
 
@@ -104,7 +108,30 @@ def connect_vpn(vpn, initial_ip):
         except Exception as e:
             log_event(f"[{vpn['Name']}] ❌ Ошибка записи .auth: {e}")
             return False
+
+        age = time.time() - otp_time
+        if age > OTP_VALIDITY:
+            log_event(f"[{vpn['Name']}] ⚠️ OTP устарел ({int(age)}s) — пропуск попытки")
+            if STOP_ON_FAILURE:
+                return False
+            continue
+
+        dev_name = find_free_tun(start=index)
+        if not dev_name:
+            log_event(f"[{vpn['Name']}] ❌ Нет свободного tun-интерфейса")
+            return False
+        log_event(f"[{vpn['Name']}] 🧵 Назначен интерфейс: {dev_name}")
+
+        cmd = [
+            "openvpn",
+            "--config", ovpn_path,
+            "--auth-user-pass", auth_path,
+            "--dev", dev_name
+        ]
+
         log_event(f"[{vpn['Name']}] 🔄 Попытка {attempt}")
+        log_event(f"[{vpn['Name']}] 🔌 Запуск OpenVPN:\n{' '.join(cmd)}")
+
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         for line in process.stdout:
             decoded = line.decode("utf-8", errors="ignore").strip()
@@ -127,10 +154,11 @@ def connect_vpn(vpn, initial_ip):
                 rule_result = subprocess.run(["ip", "rule"], capture_output=True, text=True)
                 log_event(f"[{vpn['Name']}] 📜 ip rule:\n{rule_result.stdout.strip()}")
 
-                tun_result = subprocess.run(["ip", "addr", "show", "dev", "tun0"], capture_output=True, text=True)
-                log_event(f"[{vpn['Name']}] 🔌 Интерфейс tun0:\n{tun_result.stdout.strip()}")
+                tun_result = subprocess.run(["ip", "addr", "show", "dev", dev_name], capture_output=True, text=True)
+                log_event(f"[{vpn['Name']}] 🔌 Интерфейс {dev_name}:\n{tun_result.stdout.strip()}")
 
                 return True
+
         time.sleep(5)
 
     log_event(f"[{vpn['Name']}] ❌ Ошибка после {MAX_RETRIES} попыток")
@@ -196,8 +224,8 @@ def main():
     log_event(f"🌐 IP до подключения: {initial_ip}")
     vpns = load_vpn_configs()
     inject_hosts()
-    for vpn in vpns:
-        success = connect_vpn(vpn, initial_ip)
+    for i, vpn in enumerate(vpns):
+        success = connect_vpn(vpn, initial_ip, i)
         if not success and STOP_ON_FAILURE:
             log_event(f"[{vpn['Name']}] ⛔ Остановка цепочки из-за ошибки")
             break
