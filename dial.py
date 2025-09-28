@@ -87,24 +87,25 @@ def connect_vpn(vpn, initial_ip):
     if not secret:
         return False
 
-    otp = pyotp.TOTP(secret).now()
-    password = vpn.get("Prefix", "") + otp
-
-    auth_path = f"{SECRET_DIR}/{vpn['Name']}.auth"
-    try:
-        with open(auth_path, "w") as f:
-            f.write(f"{vpn['Username']}\n{password}\n")
-    except Exception as e:
-        log_event(f"[{vpn['Name']}] ❌ Ошибка записи .auth: {e}")
-        return False
-
     cmd = ["openvpn", "--config", ovpn_path]
     log_event(f"[{vpn['Name']}] 🔌 Запуск OpenVPN:\n{' '.join(cmd)}")
 
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
     for attempt in range(1, MAX_RETRIES + 1):
+        otp = pyotp.TOTP(secret).now()
+        password = vpn.get("Prefix", "") + otp
+
+        auth_path = f"{SECRET_DIR}/{vpn['Name']}.auth"
+        try:
+            with open(auth_path, "w") as f:
+                f.write(f"{vpn['Username']}\n{password}\n")
+            os.chmod(auth_path, 0o600)
+        except Exception as e:
+            log_event(f"[{vpn['Name']}] ❌ Ошибка записи .auth: {e}")
+            return False
         log_event(f"[{vpn['Name']}] 🔄 Попытка {attempt}")
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         for line in process.stdout:
             decoded = line.decode("utf-8", errors="ignore").strip()
             log_event(f"[{vpn['Name']}] 📡 {decoded}")
@@ -130,6 +131,47 @@ def connect_vpn(vpn, initial_ip):
     log_event(f"[{vpn['Name']}] ❌ Ошибка после {MAX_RETRIES} попыток")
     return False
 
+def post_connect_check(target_file=None):
+    import os
+    if target_file is None:
+        target_file = os.path.join(os.environ.get("SECRET_DIR", "/vpn/secrets"), "targets.txt")
+    import socket, requests
+    from urllib.parse import urlparse
+
+    def check_tcp(host, port, timeout=3):
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except:
+            return False
+
+    def check_http(url, timeout=5):
+        try:
+            r = requests.get(url, timeout=timeout)
+            return r.status_code
+        except:
+            return None
+
+    print(f"📋 Проверка доступности целей из {target_file}")
+    try:
+        with open(target_file) as f:
+            for line in f:
+                target = line.strip()
+                if not target or target.startswith("#"):
+                    continue
+
+                if target.startswith("http"):
+                    status = check_http(target)
+                    print(f"🌐 {target} → HTTP {status if status else '❌'}")
+                elif ":" in target:
+                    host, port = target.split(":")
+                    ok = check_tcp(host, int(port))
+                    print(f"🔌 {host}:{port} → {'✅' if ok else '❌'}")
+                else:
+                    print(f"⚠️ Неизвестный формат: {target}")
+    except Exception as e:
+        print(f"⛔ Ошибка при проверке целей: {e}")
+
 def main():
     initial_ip = get_ip()
     log_event(f"🌐 IP до подключения: {initial_ip}")
@@ -139,6 +181,9 @@ def main():
         if not success and STOP_ON_FAILURE:
             log_event(f"[{vpn['Name']}] ⛔ Остановка цепочки из-за ошибки")
             break
+
+    if success:
+        post_connect_check()
 
 if __name__ == "__main__":
     main()
