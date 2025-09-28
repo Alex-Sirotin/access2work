@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-VPNCMD = "/vpn/vpnclient/vpncmd"
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 OTP_VALIDITY = int(os.getenv("OTP_VALIDITY", "30"))
 CONFIG_DIR = os.getenv("VPN_CONFIG_DIR", "/vpn/vpn_configs")
@@ -78,90 +77,60 @@ def decrypt_secret(path):
         return result.stdout.strip()
     return Path(path).read_text().strip()
 
-def import_vpn_profile(vpn_name):
-    profile_path = f"{PROFILE_DIR}/{vpn_name}.vpn"
-    if not Path(profile_path).exists():
-        log_event(f"[{vpn_name}] ⚠️ Профиль {profile_path} не найден — пропуск")
-        return False
-    subprocess.run([VPNCMD, "localhost", "/CLIENT", "/CMD", "AccountDelete", vpn_name], capture_output=True)
-    subprocess.run([VPNCMD, "localhost", "/CLIENT", "/CMD", "AccountImport", profile_path], capture_output=True)
-    log_event(f"[{vpn_name}] 📥 Профиль импортирован")
-    return True
-
 def connect_vpn(vpn, initial_ip):
-    if not import_vpn_profile(vpn["Name"]):
+    ovpn_path = f"{PROFILE_DIR}/{vpn['Name']}.ovpn"
+    if not Path(ovpn_path).exists():
+        log_event(f"[{vpn['Name']}] ⚠️ Профиль {ovpn_path} не найден — пропуск")
         return False
 
     secret = decrypt_secret(vpn["SecretPath"])
     if not secret:
         return False
 
-    log_event(f"[{vpn['Name']}] 🔐 Расшифрованный секрет: {repr(secret)}")
-
     otp = pyotp.TOTP(secret).now()
     password = vpn.get("Prefix", "") + otp
 
-    cmd = [
-        VPNCMD, "localhost", "/CLIENT", "/CMD",
-        "AccountConnect", vpn["Name"],
-        f"/USERNAME:{vpn['Username']}",
-        f"/PASSWORD:{password}"
-    ]
+    auth_path = f"{SECRET_DIR}/{vpn['Name']}.auth"
+    try:
+        with open(auth_path, "w") as f:
+            f.write(f"{vpn['Username']}\n{password}\n")
+    except Exception as e:
+        log_event(f"[{vpn['Name']}] ❌ Ошибка записи .auth: {e}")
+        return False
 
-    log_event(f"[{vpn['Name']}] 🧪 Команда подключения: {' '.join(cmd)}")
+    cmd = ["openvpn", "--config", ovpn_path]
+    log_event(f"[{vpn['Name']}] 🔌 Запуск OpenVPN:\n{' '.join(cmd)}")
+
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
     for attempt in range(1, MAX_RETRIES + 1):
         log_event(f"[{vpn['Name']}] 🔄 Попытка {attempt}")
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        for line in process.stdout:
+            decoded = line.decode("utf-8", errors="ignore").strip()
+            log_event(f"[{vpn['Name']}] 📡 {decoded}")
+            if "Initialization Sequence Completed" in decoded:
+                log_event(f"[{vpn['Name']}] ✅ VPN подключен")
+                new_ip = get_ip()
+                log_event(f"[{vpn['Name']}] 🌐 IP после подключения: {new_ip}")
+                if initial_ip == new_ip:
+                    log_event(f"[{vpn['Name']}] ⚠️ IP не изменился — возможно, VPN не активен")
 
-        if "Session Status            : Connected" in result.stdout:
-            log_event(f"[{vpn['Name']}] ✅ Подключено")
-            new_ip = get_ip()
-            log_event(f"[{vpn['Name']}] 🌐 IP после подключения: {new_ip}")
-            if initial_ip == new_ip:
-                log_event(f"[{vpn['Name']}] ⚠️ IP не изменился — возможно, VPN не активен")
+                route_result = subprocess.run(["ip", "route"], capture_output=True, text=True)
+                log_event(f"[{vpn['Name']}] 📡 ip route:\n{route_result.stdout.strip()}")
 
-            status_cmd = [VPNCMD, "localhost", "/CLIENT", "/CMD", "AccountStatusGet", vpn["Name"]]
-            status_result = subprocess.run(status_cmd, capture_output=True, text=True)
-            log_event(f"[{vpn['Name']}] 📊 Статус аккаунта:\n{status_result.stdout.strip()}")
+                rule_result = subprocess.run(["ip", "rule"], capture_output=True, text=True)
+                log_event(f"[{vpn['Name']}] 📜 ip rule:\n{rule_result.stdout.strip()}")
 
-            route_result = subprocess.run(["ip", "route"], capture_output=True, text=True)
-            log_event(f"[{vpn['Name']}] 📡 ip route:\n{route_result.stdout.strip()}")
+                tun_result = subprocess.run(["ip", "addr", "show", "dev", "tun0"], capture_output=True, text=True)
+                log_event(f"[{vpn['Name']}] 🔌 Интерфейс tun0:\n{tun_result.stdout.strip()}")
 
-            rule_result = subprocess.run(["ip", "rule"], capture_output=True, text=True)
-            log_event(f"[{vpn['Name']}] 📜 ip rule:\n{rule_result.stdout.strip()}")
-
-            tun_result = subprocess.run(["ip", "addr", "show", "dev", "tun0"], capture_output=True, text=True)
-            log_event(f"[{vpn['Name']}] 🔌 Интерфейс tun0:\n{tun_result.stdout.strip()}")
-
-            return True
-        else:
-            log_event(f"[{vpn['Name']}] ❌ Ошибка подключения:\n{result.stdout.strip()}")
+                return True
         time.sleep(5)
 
     log_event(f"[{vpn['Name']}] ❌ Ошибка после {MAX_RETRIES} попыток")
     return False
 
-def start_vpnclient():
-    result = subprocess.run(["/vpn/vpnclient/vpnclient", "start"], capture_output=True, text=True)
-    if result.returncode != 0:
-        log_event(f"❌ Не удалось запустить vpnclient: {result.stderr.strip()}")
-    else:
-        log_event("✅ vpnclient запущен")
-
-    try:
-        ps = subprocess.run(["ps", "-ef"], capture_output=True, text=True)
-        lines = [line for line in ps.stdout.splitlines() if "vpnclient" in line and "start" not in line]
-        if lines:
-            for line in lines:
-                log_event(f"🔎 vpnclient процесс: {line}")
-        else:
-            log_event("⚠️ vpnclient процесс не найден в ps")
-    except Exception as e:
-        log_event(f"❌ Ошибка при проверке vpnclient процесса: {e}")
-
 def main():
-    start_vpnclient()
     initial_ip = get_ip()
     log_event(f"🌐 IP до подключения: {initial_ip}")
     vpns = load_vpn_configs()

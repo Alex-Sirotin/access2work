@@ -1,4 +1,4 @@
-.PHONY: build seal run stop clean status diag seal-verify rebuild debug
+.PHONY: build seal run stop clean status diag seal-verify rebuild debug dial
 
 include .env
 export
@@ -44,7 +44,7 @@ stop:
 	docker stop $(CONTAINER_NAME) || true
 
 clean:
-	rm -f secrets/*.log secrets/*.gpg
+	rm -f secrets/*.log secrets/*.gpg secrets/*.auth
 
 status:
 	docker exec $(CONTAINER_NAME) sh -c "\
@@ -54,13 +54,13 @@ status:
 		echo '\n🔒 VPN-интерфейсы:' && ip link show | grep tun || echo '❌ tun не найден'"
 
 diag:
-	@docker inspect -f '{{.State.Running}}' $(CONTAINER_NAME) 2>/dev/null | grep true >/dev/null || \
-		{ echo "❌ Контейнер $(CONTAINER_NAME) не запущен"; exit 1; }
 	docker exec $(CONTAINER_NAME) sh -c "\
-		chmod +x /vpn/vpn-diag.sh && \
-		sh /vpn/vpn-diag.sh && \
-		echo '\n📄 vpn_diag.log:' && \
-		cat /vpn/secrets/vpn_diag.log || echo '❌ Лог не найден'"
+		echo '🧪 VPN диагностика — $$(date)'; \
+		echo '\n🌍 Внешний IP:' && curl -s https://ifconfig.me || echo '❌ curl не сработал'; \
+		echo '\n📡 Интерфейсы:' && ip addr show || echo '❌ ip addr не сработал'; \
+		echo '\n🧭 Маршруты:' && ip route show || echo '❌ ip route не сработал'; \
+		echo '\n🔌 Интерфейс tun0:' && ip addr show dev tun0 || echo '❌ tun0 не найден'; \
+		echo '\n📋 Процесс OpenVPN:' && ps -ef | grep openvpn | grep -v grep || echo '❌ openvpn не запущен'"
 
 seal-verify:
 	@echo "🔐 Шифрование + 🧪 Диагностика + 📄 Логи"
@@ -87,4 +87,3 @@ debug:
 
 dial:
 	docker exec $(CONTAINER_NAME) python3 /vpn/dial.py
-
