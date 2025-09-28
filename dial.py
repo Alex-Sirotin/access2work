@@ -111,6 +111,11 @@ def connect_vpn(vpn, initial_ip):
             log_event(f"[{vpn['Name']}] 📡 {decoded}")
             if "Initialization Sequence Completed" in decoded:
                 log_event(f"[{vpn['Name']}] ✅ VPN подключен")
+                try:
+                    os.remove(auth_path)
+                    log_event(f"[{vpn['Name']}] 🧹 Удалён .auth после подключения")
+                except Exception as e:
+                    log_event(f"[{vpn['Name']}] ⚠️ Не удалось удалить .auth: {e}")
                 new_ip = get_ip()
                 log_event(f"[{vpn['Name']}] 🌐 IP после подключения: {new_ip}")
                 if initial_ip == new_ip:
@@ -172,10 +177,25 @@ def post_connect_check(target_file=None):
     except Exception as e:
         print(f"⛔ Ошибка при проверке целей: {e}")
 
+def inject_hosts(file_path=f"{SECRET_DIR}/extra_hosts.txt"):
+    if not Path(file_path).exists():
+        log_event(f"⚠️ Файл hosts не найден: {file_path}")
+        return
+    try:
+        with open(file_path) as f:
+            lines = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+        with open("/etc/hosts", "a") as hosts:
+            for line in lines:
+                hosts.write(line + "\n")
+        log_event(f"📌 Добавлено {len(lines)} записей в /etc/hosts")
+    except Exception as e:
+        log_event(f"❌ Ошибка при добавлении в /etc/hosts: {e}")
+
 def main():
     initial_ip = get_ip()
     log_event(f"🌐 IP до подключения: {initial_ip}")
     vpns = load_vpn_configs()
+    inject_hosts()
     for vpn in vpns:
         success = connect_vpn(vpn, initial_ip)
         if not success and STOP_ON_FAILURE:

@@ -1,0 +1,10 @@
+# Исключаем временные и чувствительные файлы
+secrets/*.auth
+secrets/*.log
+secrets/*.gpg
+__pycache__/
+*.pyc
+*.swp
+*.bak
+*.tmp
+.env
