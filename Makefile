@@ -24,17 +24,33 @@ seal:
 		$(VOLUMES) $(IMAGE_NAME) python3 /vpn/seal.py
 
 run:
-	@echo "🚀 Запуск контейнера — режим: $(RUN_MODE)"
 	-docker rm -f $(CONTAINER_NAME) 2>/dev/null || true
-	@if [ "$(RUN_MODE)" = "debug" ]; then \
-		docker run -it --name $(CONTAINER_NAME) \
-			--env-file .env --cap-add=NET_ADMIN --device /dev/net/tun \
-			$(VOLUMES) $(IMAGE_NAME); \
-	else \
-		docker run -d --name $(CONTAINER_NAME) \
-			--env-file .env --cap-add=NET_ADMIN --device /dev/net/tun \
-			$(VOLUMES) $(IMAGE_NAME) $(if $(KEEP_ALIVE),sh -c "python3 /vpn/dial.py && tail -f /dev/null",python3 /vpn/dial.py); \
-	fi
+	docker run -it --name $(CONTAINER_NAME) \
+		--env-file .env \
+		--cap-add=NET_ADMIN --device /dev/net/tun \
+		-v $(PWD)/vpn_configs:/vpn/vpn_configs \
+		-v $(PWD)/vpn_profiles:/vpn/vpn_profiles \
+		-v $(PWD)/secrets:/vpn/secrets \
+        -p $(GIT_PROXY_PORT):$(GIT_PROXY_PORT) \
+        -p $(PG_PROXY_PORT_FUTURE):$(PG_PROXY_PORT_FUTURE) \
+        -p $(PG_PROXY_PORT_STAGE):$(PG_PROXY_PORT_STAGE) \
+		$(IMAGE_NAME)
+
+# run:
+# 	@echo "🚀 Запуск контейнера — режим: $(RUN_MODE)"
+# 	-docker rm -f $(CONTAINER_NAME) 2>/dev/null || true
+# 	@if [ "$(RUN_MODE)" = "debug" ]; then \
+# 		docker run -it --name $(CONTAINER_NAME) \
+# 			--env-file .env --cap-add=NET_ADMIN --device /dev/net/tun \
+# 			-p $(PROXY_PORT):$(PROXY_PORT) \
+# 			$(VOLUMES) $(IMAGE_NAME); \
+# 	else \
+# 		docker run -d --name $(CONTAINER_NAME) \
+# 			--env-file .env --cap-add=NET_ADMIN --device /dev/net/tun \
+# 			-p $(PROXY_PORT):$(PROXY_PORT) \
+# 			$(VOLUMES) $(IMAGE_NAME) \
+# 			$(if $(KEEP_ALIVE),sh -c "python3 /vpn/dial.py && tail -f /dev/null",python3 /vpn/dial.py); \
+# 	fi
 
 stop:
 	@if docker ps -a --format '{{.Names}}' | grep -q "^$(CONTAINER_NAME)$$"; then \
@@ -58,17 +74,7 @@ status:
 	fi
 
 diag:
-	@if ! docker ps --format '{{.Names}}' | grep -q "^$(CONTAINER_NAME)$$"; then \
-		echo "❌ Контейнер $(CONTAINER_NAME) не запущен"; \
-	else \
-		docker exec $(CONTAINER_NAME) sh -c "\
-			echo '🧪 VPN диагностика — $$(date)'; \
-			echo '\n🌍 Внешний IP:' && curl -s https://ifconfig.me || echo '❌ curl не сработал'; \
-			echo '\n📡 Интерфейсы:' && ip addr show || echo '❌ ip addr не сработал'; \
-			echo '\n🧭 Маршруты:' && ip route show || echo '❌ ip route не сработал'; \
-			echo '\n🔌 Интерфейс tun0:' && ip addr show dev tun0 || echo '❌ tun0 не найден'; \
-			echo '\n📋 Процесс OpenVPN:' && ps -ef | grep openvpn | grep -v grep || echo '❌ openvpn не запущен'"; \
-	fi
+	docker exec $(CONTAINER_NAME) bash /vpn/diag.sh
 
 seal-verify: seal diag
 	@echo "\n📄 vpn_connect.log:" && tail -n 20 secrets/vpn_connect.log || echo "❌ vpn_connect.log не найден"

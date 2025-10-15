@@ -21,9 +21,11 @@
 
 ```
 Access2Work/
-├── dial.py                       # Основной скрипт подключения к VPN
-├── seal.py                       # Генерация и шифрование TOTP-секретов
-├── vpn-diag.sh                   # Bash-диагностика VPN
+├──scripts
+│   ├── dial.py                   # Основной скрипт подключения к VPN
+│   ├── diag.sh                   # Bash-диагностика VPN шифрование TOTP-секретов
+│   ├── entrypoint.sh
+│   └── seal.py                   # Генерация и шифрование TOTP-секретов
 ├── requirements.txt              # Python-зависимости
 ├── vpn_configs/                  # JSON-файлы с параметрами подключения
 │   ├── VPN1.json
