@@ -1,30 +1,74 @@
 #!/bin/bash
+set -e
+
 echo "🧪 Диагностика — $(date)"
 
-command -v nc >/dev/null || echo "❌ nc не установлен"
-command -v ssh >/dev/null || echo "❌ ssh не установлен"
-command -v openvpn >/dev/null || echo "❌ openvpn не установлен"
+# Загрузка переменных из .env
+source /vpn/.env 2>/dev/null || echo "⚠️ .env не найден или не загружен"
 
-echo -e "\n🌍 Внешний IP:"
+# Проверка базовых утилит
+echo -e "\n🔧 Проверка утилит:"
+for cmd in curl nc psql rinetd openvpn; do
+    command -v $cmd >/dev/null && echo "✅ $cmd установлен" || echo "❌ $cmd не найден"
+done
+
+# Внешний IP
+echo -e "\n🌍 Внешний IP через VPN:"
 curl -s https://ifconfig.me || echo "❌ curl не сработал"
 
+# Интерфейсы и маршруты
 echo -e "\n📡 Интерфейсы:"
-ip addr show || echo "❌ ip addr не сработал"
+ip -brief address || echo "❌ ip addr не сработал"
 
 echo -e "\n🧭 Маршруты:"
 ip route show || echo "❌ ip route не сработал"
 
-echo -e "\n🔌 Интерфейс tun0:"
-ip addr show dev tun0 || echo "❌ tun0 не найден"
+# VPN-интерфейсы
+echo -e "\n🔒 VPN-интерфейсы:"
+ip link show | grep tun || echo "❌ tun-интерфейс не найден"
 
-echo -e "\n📋 Процесс OpenVPN:"
-ps -ef | grep openvpn | grep -v grep || echo "❌ openvpn не запущен"
+# rinetd
+echo -e "\n📋 Конфигурация rinetd:"
+cat /etc/rinetd.conf || echo "❌ rinetd.conf не найден"
 
-echo -e "\n🧪 SOCKS5-прокси:"
-nc -z localhost ${PROXY_PORT:-1080} && echo "✅ Прокси слушает" || echo "❌ Прокси не слушает"
+echo -e "\n📡 Слушающие порты rinetd:"
+ss -tnlp | grep rinetd || echo "❌ rinetd не слушает"
 
-echo -e "\n🌐 Доступность GitLab через прокси:"
-curl --socks5-hostname localhost:${PROXY_PORT:-1080} https://gitlab.tektorg.ru -s -o /dev/null && echo "✅ GitLab доступен через VPN" || echo "❌ GitLab недоступен через VPN"
+echo -e "\n🧪 Проверка PostgreSQL-баз из db_targets.json"
 
-echo -e "\n🔐 Проверка SSH-доступа к GitLab:"
-ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o ProxyCommand="nc -x localhost:${PROXY_PORT:-1080} -X 5 %h %p" git@gitlab.tektorg.ru exit || echo "❌ SSH-доступ к GitLab не работает"
+DB_CONFIG="/vpn/vpn_configs/db_targets.json"
+
+if [[ ! -f "$DB_CONFIG" ]]; then
+    echo "❌ Конфигурация БД не найдена: $DB_CONFIG"
+    exit 1
+fi
+
+jq -c '.[]' "$DB_CONFIG" | while read -r db; do
+    name=$(echo "$db" | jq -r '.name')
+    host=$(echo "$db" | jq -r '.host // "localhost"')
+    port=$(echo "$db" | jq -r '.port // 5432')
+    database=$(echo "$db" | jq -r '.database')
+    user=$(echo "$db" | jq -r '.user')
+    password=$(echo "$db" | jq -r '.password')
+
+    echo -e "\n🔍 [$name] Проверка подключения к $database@$host:$port"
+
+    if [[ -z "$password" || "$password" == "null" ]]; then
+        echo "❌ [$name] Пароль не задан в конфиге"
+        continue
+    fi
+
+    export PGPASSWORD="$password"
+
+    psql -h "$host" -p "$port" -U "$user" -d "$database" -c "SELECT 1;" \
+        && echo "✅ [$name] Доступно" \
+        || echo "❌ [$name] Недоступно"
+done
+
+# Jira
+echo -e "\n🌐 Jira доступность:"
+curl -s -I https://jira.tektorg.ru | head -n 1 | grep "200\|302" && echo "✅ Jira доступна" || echo "❌ Jira недоступна"
+
+# Gitlab
+echo -e "\n🌐 Gitlab доступность:"
+curl -s -I https://gitlab.tektorg.ru | head -n 1 | grep "200\|302" && echo "✅ Gitlab доступен" || echo "❌ Gitlab недоступен"

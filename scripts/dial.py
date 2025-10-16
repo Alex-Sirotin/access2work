@@ -18,7 +18,6 @@ SECRET_DIR = os.getenv("VPN_SECRET_DIR", "/vpn/secrets")
 LOG_PATH = os.getenv("LOG_PATH", "/vpn/secrets/vpn_connect.log")
 ENABLE_LOG = os.getenv("ENABLE_LOG", "true").lower() == "true"
 STOP_ON_FAILURE = os.getenv("STOP_ON_FAILURE", "true").lower() == "true"
-PROXY_PORT = os.getenv("PROXY_PORT", "1080")
 VPN_CONNECT_DELAY = int(os.getenv("VPN_CONNECT_DELAY", "10"))
 OPENVPN_RETRY = os.getenv("OPENVPN_RETRY", "1")
 OPENVPN_RETRY_DELAY = os.getenv("OPENVPN_RETRY_DELAY", "2")
@@ -38,12 +37,6 @@ def log_event(message):
                     fallback.write(message + "\n")
             except Exception as e2:
                 print(f"❌ Ошибка записи в fallback.log: {e2}")
-
-def get_ip():
-    try:
-        return requests.get("https://ifconfig.me", timeout=5).text.strip()
-    except:
-        return "Unavailable"
 
 def load_vpn_configs():
     configs = []
@@ -79,6 +72,7 @@ def decrypt_secret(path):
         if result.returncode != 0:
             log_event(f"❌ Ошибка GPG: {result.stderr.strip()}")
             return None
+        log_event(f"🔓 Секрет расшифрован: {path}")
         return result.stdout.strip()
     return Path(path).read_text().strip()
 
@@ -89,7 +83,7 @@ def find_free_tun(start=0, max_search=10):
             return name
     return None
 
-def connect_vpn(vpn, initial_ip, index):
+def connect_vpn(vpn, index):
     ovpn_path = f"{PROFILE_DIR}/{vpn['Name']}.ovpn"
     if not Path(ovpn_path).exists():
         log_event(f"[{vpn['Name']}] ⚠️ Профиль {ovpn_path} не найден — пропуск")
@@ -99,188 +93,82 @@ def connect_vpn(vpn, initial_ip, index):
     if not secret:
         return False
 
-    for attempt in range(1, MAX_RETRIES + 1):
-        otp_time = time.time()
-        otp = pyotp.TOTP(secret).now()
-        password = vpn.get("Prefix", "") + otp
+    if not vpn.get("Username"):
+        log_event(f"[{vpn['Name']}] ❌ Username не задан в конфиге")
+        return False
 
-        auth_path = f"{SECRET_DIR}/{vpn['Name']}.auth"
-        try:
+    auth_path = f"{SECRET_DIR}/{vpn['Name']}.auth"
+
+    try:
+        for attempt in range(1, MAX_RETRIES + 1):
+            otp_time = time.time()
+            otp = pyotp.TOTP(secret).now()
+            password = vpn.get("Prefix", "") + otp
+
             with open(auth_path, "w") as f:
                 f.write(f"{vpn['Username']}\n{password}\n")
             os.chmod(auth_path, 0o600)
-        except Exception as e:
-            log_event(f"[{vpn['Name']}] ❌ Ошибка записи .auth: {e}")
-            return False
 
-        age = time.time() - otp_time
-        if age > OTP_VALIDITY:
-            log_event(f"[{vpn['Name']}] ⚠️ OTP устарел ({int(age)}s) — пропуск попытки")
-            if STOP_ON_FAILURE:
+            age = time.time() - otp_time
+            if age > OTP_VALIDITY:
+                log_event(f"[{vpn['Name']}] ⚠️ OTP устарел ({int(age)}s) — пропуск попытки")
+                if STOP_ON_FAILURE:
+                    return False
+                continue
+
+            dev_name = find_free_tun(start=index)
+            if not dev_name:
+                log_event(f"[{vpn['Name']}] ❌ Нет свободного tun-интерфейса")
                 return False
-            continue
+            log_event(f"[{vpn['Name']}] 🧵 Назначен интерфейс: {dev_name}")
 
-        dev_name = find_free_tun(start=index)
-        if not dev_name:
-            log_event(f"[{vpn['Name']}] ❌ Нет свободного tun-интерфейса")
-            return False
-        log_event(f"[{vpn['Name']}] 🧵 Назначен интерфейс: {dev_name}")
+            cmd = [
+                "openvpn",
+                "--config", ovpn_path,
+                "--auth-user-pass", auth_path,
+                "--dev", dev_name,
+                "--connect-retry-max", OPENVPN_RETRY,
+                "--connect-retry", OPENVPN_RETRY_DELAY
+            ]
 
-        cmd = [
-            "openvpn",
-            "--config", ovpn_path,
-            "--auth-user-pass", auth_path,
-            "--dev", dev_name,
-            "--connect-retry-max", OPENVPN_RETRY,
-            "--connect-retry", OPENVPN_RETRY_DELAY
-        ]
+            log_event(f"[{vpn['Name']}] 🔄 Попытка {attempt}")
+            log_event(f"[{vpn['Name']}] 🔌 Запуск OpenVPN:\n{' '.join(cmd)}")
 
-        log_event(f"[{vpn['Name']}] 🔄 Попытка {attempt}")
-        log_event(f"[{vpn['Name']}] 🔌 Запуск OpenVPN:\n{' '.join(cmd)}")
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            for line in process.stdout:
+                decoded = line.decode("utf-8", errors="ignore").strip()
+                log_event(f"[{vpn['Name']}] 📡 {decoded}")
+                if "Initialization Sequence Completed" in decoded:
+                    log_event(f"[{vpn['Name']}] ✅ VPN подключен")
+                    try:
+                        os.remove(auth_path)
+                        log_event(f"[{vpn['Name']}] 🧹 Удалён .auth после подключения")
+                    except Exception as e:
+                        log_event(f"[{vpn['Name']}] ⚠️ Не удалось удалить .auth: {e}")
 
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        for line in process.stdout:
-            decoded = line.decode("utf-8", errors="ignore").strip()
-            log_event(f"[{vpn['Name']}] 📡 {decoded}")
-            if "Initialization Sequence Completed" in decoded:
-                log_event(f"[{vpn['Name']}] ✅ VPN подключен")
-                try:
-                    os.remove(auth_path)
-                    log_event(f"[{vpn['Name']}] 🧹 Удалён .auth после подключения")
-                except Exception as e:
-                    log_event(f"[{vpn['Name']}] ⚠️ Не удалось удалить .auth: {e}")
-                new_ip = get_ip()
-                log_event(f"[{vpn['Name']}] 🌐 IP после подключения: {new_ip}")
-                if initial_ip == new_ip:
-                    log_event(f"[{vpn['Name']}] ⚠️ IP не изменился — возможно, VPN не активен")
+                    route_result = subprocess.run(["ip", "route"], capture_output=True, text=True)
+                    log_event(f"[{vpn['Name']}] 📡 ip route:\n{route_result.stdout.strip()}")
 
-                route_result = subprocess.run(["ip", "route"], capture_output=True, text=True)
-                log_event(f"[{vpn['Name']}] 📡 ip route:\n{route_result.stdout.strip()}")
+                    rule_result = subprocess.run(["ip", "rule"], capture_output=True, text=True)
+                    log_event(f"[{vpn['Name']}] 📜 ip rule:\n{rule_result.stdout.strip()}")
 
-                rule_result = subprocess.run(["ip", "rule"], capture_output=True, text=True)
-                log_event(f"[{vpn['Name']}] 📜 ip rule:\n{rule_result.stdout.strip()}")
+                    tun_result = subprocess.run(["ip", "addr", "show", "dev", dev_name], capture_output=True, text=True)
+                    log_event(f"[{vpn['Name']}] 🔌 Интерфейс {dev_name}:\n{tun_result.stdout.strip()}")
 
-                tun_result = subprocess.run(["ip", "addr", "show", "dev", dev_name], capture_output=True, text=True)
-                log_event(f"[{vpn['Name']}] 🔌 Интерфейс {dev_name}:\n{tun_result.stdout.strip()}")
+                    return True
 
-                return True
+            time.sleep(5)
 
-        time.sleep(5)
+    finally:
+        if Path(auth_path).exists():
+            try:
+                os.remove(auth_path)
+                log_event(f"[{vpn['Name']}] 🧹 Удалён .auth после неудачи")
+            except Exception as e:
+                log_event(f"[{vpn['Name']}] ⚠️ Не удалось удалить .auth: {e}")
 
     log_event(f"[{vpn['Name']}] ❌ Ошибка после {MAX_RETRIES} попыток")
     return False
-
-def post_connect_check(target_file=None, debug=True):
-    import os
-    import subprocess
-    from urllib.parse import urlparse
-
-    GREEN = "\033[92m"
-    RED = "\033[91m"
-    RESET = "\033[0m"
-
-    if target_file is None:
-        target_file = os.path.join(os.environ.get("SECRET_DIR", "/vpn/secrets"), "targets.txt")
-
-    def check_tcp_port(host, port):
-        cmd = ["nc", "-vz", host, str(port)]
-        if debug:
-            print(f"🔍 nc cmd: {' '.join(cmd)}")
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if debug:
-            print(f"⚠️ nc stderr: {result.stderr.decode().strip()}")
-        return result.returncode == 0
-
-    def check_tls_handshake(host, timeout=3):
-        try:
-            cmd = ["openssl", "s_client", "-connect", f"{host}:443", "-servername", host]
-            if debug:
-                print(f"🔍 openssl cmd: {' '.join(cmd)}")
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
-            return b"CONNECTED" in result.stdout
-        except subprocess.TimeoutExpired:
-            if debug:
-                print(f"⚠️ openssl timeout for {host}")
-            return False
-        except Exception as e:
-            if debug:
-                print(f"⚠️ openssl error for {host}: {e}")
-            return False
-
-    def check_http(url):
-        parsed = urlparse(url)
-        host = parsed.hostname
-
-        if not check_tcp_port(host, 443):
-            print(f"{RED}❌ TCP порт 443 недоступен для {host}{RESET}")
-            return False
-
-        if not check_tls_handshake(host):
-            print(f"{RED}❌ TLS handshake не прошёл для {host}{RESET}")
-            return False
-
-        cmd = [
-            "curl", "-s", "--connect-timeout", "5", "--max-time", "10",
-            "-H", "User-Agent: Mozilla/5.0",
-            url
-        ]
-        if debug:
-            print(f"🔍 curl cmd: {' '.join(cmd)}")
-        result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        if debug:
-            print(f"⚠️ curl stderr: {result.stderr.decode().strip() or '[empty]'}")
-        return result.returncode == 0
-
-    def check_git_ssh(repo_url):
-        try:
-            user_host, path = repo_url.split(":", 1)
-            user, host = user_host.split("@")
-            cmd = ["ssh", "-T", f"{user}@{host}"]
-            if debug:
-                print(f"🔍 ssh cmd: {' '.join(cmd)}")
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
-            out = result.stdout.decode() + result.stderr.decode()
-            if debug:
-                print(f"⚠️ ssh output: {out.strip()}")
-            return "Welcome" in out or "successfully authenticated" in out or "You can use git" in out
-        except Exception as e:
-            if debug:
-                print(f"⚠️ ssh error: {e}")
-            return False
-
-    print(f"📋 Проверка доступности целей из {target_file}")
-    try:
-        current_section = None
-        with open(target_file) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-
-                if line.startswith("[") and line.endswith("]"):
-                    current_section = line[1:-1].lower()
-                    continue
-
-                if current_section == "http":
-                    ok = check_http(line)
-                    print(f"🌐 [HTTP] {line} → {GREEN if ok else RED}{'✅' if ok else '❌'}{RESET}")
-
-                elif current_section == "postgresql":
-                    if ":" not in line:
-                        print(f"⚠️ [PostgreSQL] Неверный формат: {line}")
-                        continue
-                    host, port = line.split(":")
-                    ok = check_tcp_port(host, int(port))
-                    print(f"🔌 [PostgreSQL] {host}:{port} → {GREEN if ok else RED}{'✅' if ok else '❌'}{RESET}")
-
-                elif current_section == "git":
-                    ok = check_git_ssh(line)
-                    print(f"🧬 [GIT] {line} → {GREEN if ok else RED}{'✅' if ok else '❌'}{RESET}")
-
-                else:
-                    print(f"⚠️ Неизвестная секция [{current_section}] → {line}")
-    except Exception as e:
-        print(f"{RED}⛔ Ошибка при проверке целей: {e}{RESET}")
 
 def inject_hosts(file_path=f"{SECRET_DIR}/extra_hosts.txt"):
     if not Path(file_path).exists():
@@ -297,23 +185,24 @@ def inject_hosts(file_path=f"{SECRET_DIR}/extra_hosts.txt"):
         log_event(f"❌ Ошибка при добавлении в /etc/hosts: {e}")
 
 def main():
-    log_event(f"🧭 SOCKS5-прокси слушает на порту {PROXY_PORT}")
-    initial_ip = get_ip()
-    log_event(f"🌐 IP до подключения: {initial_ip}")
     vpns = load_vpn_configs()
+    if not vpns:
+        log_event("❌ Нет доступных VPN-конфигов — завершение")
+        return
     inject_hosts()
     subprocess.run(["cat", "/etc/hosts"])
     for i, vpn in enumerate(vpns):
-        success = connect_vpn(vpn, initial_ip, i)
+        success = connect_vpn(vpn, i)
         if not success and STOP_ON_FAILURE:
             log_event(f"[{vpn['Name']}] ⛔ Остановка цепочки из-за ошибки")
             break
         if i < len(vpns) - 1:
             log_event(f"⏳ Пауза {VPN_CONNECT_DELAY}s перед следующим VPN")
             time.sleep(VPN_CONNECT_DELAY)
-
-    # if success:
-    #     post_connect_check()
+    log_event("✅ dial.py завершён")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        log_event(f"❌ dial.py аварийно завершён: {e}")

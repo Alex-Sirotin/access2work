@@ -1,11 +1,8 @@
 #!/bin/bash
 set -e
 
-# Проверка зависимостей
-command -v socat >/dev/null || { echo "❌ socat не установлен"; exit 1; }
-
-# Подключение к VPN
-python3 /vpn/dial.py
+echo "🔒 Запуск VPN (dial.py)"
+python3 /vpn/dial.py > /vpn/secrets/dial.log 2>&1 || echo "⚠️ dial.py завершился с ошибкой"
 
 # Используем переменные из .env
 GIT_PORT="${GIT_PROXY_PORT:-2222}"
@@ -15,16 +12,31 @@ GIT_DEFAULT="${GITLAB:-gitlab.tektorg.ru:22}"
 STAGE_DEFAULT="${PG_STAGE:-10.101.32.8:5340}"
 FUTURE_DEFAULT="${PG_FUTURE:-10.101.32.39:5340}"
 
+# Генерация rinetd.conf
+cat <<EOF > /etc/rinetd.conf
+0.0.0.0 $GIT_PORT ${GIT_DEFAULT/:/ } 
+0.0.0.0 $PG_PORT_FUTURE ${FUTURE_DEFAULT/:/ } 
+0.0.0.0 $PG_PORT_STAGE ${STAGE_DEFAULT/:/ } 
+EOF
 
-# TCP-прокси
-echo "🔁 Git proxy: localhost:$GIT_PORT → $GIT_DEFAULT"
-socat -v TCP-LISTEN:"$GIT_PORT",fork TCP:"$GIT_DEFAULT" &
+echo "📄 rinetd.conf:"
+cat /etc/rinetd.conf
 
-echo "🔁 PG future: localhost:$PG_PORT_FUTURE → $FUTURE_DEFAULT"
-socat -v TCP-LISTEN:"$PG_PORT_FUTURE",fork TCP:"$FUTURE_DEFAULT" &
+echo "🔁 Запуск rinetd в foreground-режиме"
+rinetd -f -c /etc/rinetd.conf > /vpn/secrets/rinetd.log 2>&1 &
+RINETD_PID=$!
 
-echo "🔁 PG stage : localhost:$PG_PORT_STAGE → $STAGE_DEFAULT"
-socat -v TCP-LISTEN:"$PG_PORT_STAGE",fork TCP:"$STAGE_DEFAULT" &
+# Проверка, что rinetd действительно запустился
+sleep 1
+if ! ps -p $RINETD_PID > /dev/null; then
+    echo "❌ rinetd завершился сразу — возможно, ошибка в конфиге или занятый порт"
+    cat /vpn/secrets/rinetd.log
+    exit 1
+fi
 
 echo "✅ TCP-прокси запущены: Git ($GIT_PORT), PostgreSQL ($PG_PORT_FUTURE, $PG_PORT_STAGE)"
-tail -f /dev/null
+
+# Удержание контейнера, пока работает rinetd
+wait $RINETD_PID
+
+echo "🛑 rinetd завершился — остановка контейнера"
