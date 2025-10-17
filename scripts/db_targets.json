@@ -1,0 +1,12 @@
+[
+  {
+    "name": "<test>",
+    "remote_host": "<addr>",
+    "host": "localhost",
+    "port": 54321,
+    "remote_port": 5432,
+    "database": "<db>",
+    "user": "<user>",
+    "password": "<pass>"
+  }
+]

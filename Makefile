@@ -12,6 +12,8 @@ VOLUMES = \
 	-v $(PWD)/vpn_profiles:/vpn/vpn_profiles \
 	-v $(PWD)/secrets:/vpn/secrets
 
+DB_PORT_FLAGS := $(shell jq -r '.[] | "-p \(.port):\(.port)"' scripts/db_targets.json | xargs)
+
 build:
 	docker build -t $(IMAGE_NAME) .
 
@@ -34,8 +36,8 @@ run:
 		-v $(PWD)/vpn_profiles:/vpn/vpn_profiles \
 		-v $(PWD)/secrets:/vpn/secrets \
 		-p $(GIT_PROXY_PORT):$(GIT_PROXY_PORT) \
-		-p $(PG_PROXY_PORT_FUTURE):$(PG_PROXY_PORT_FUTURE) \
-		-p $(PG_PROXY_PORT_STAGE):$(PG_PROXY_PORT_STAGE) \
+        $(DB_PORT_FLAGS) \
+		-p 443:443 \
 		$(IMAGE_NAME)
 
 stop:
@@ -53,7 +55,6 @@ status:
 		echo "❌ Контейнер $(CONTAINER_NAME) не запущен"; \
 	else \
 		docker exec $(CONTAINER_NAME) sh -c "\
-			echo '🌐 Внутренний IP:' && curl -s https://api.ipify.org || echo '❌ IP недоступен'; \
 			echo '\n🧭 Интерфейсы:' && ip -brief address || echo '❌ ip не найден'; \
 			echo '\n📡 Маршруты:' && ip route show || echo '❌ ip route не найден'; \
 			echo '\n🔒 VPN-интерфейсы:' && ip link show | grep tun || echo '❌ tun не найден'"; \
@@ -76,6 +77,8 @@ logs:
 
 ps:
 	docker ps -a | grep $(CONTAINER_NAME) || echo "❌ Контейнер $(CONTAINER_NAME) не найден"
+
+rebuild: clean build seal run logs status
 
 help:
 	@echo "📦 Makefile цели:"
