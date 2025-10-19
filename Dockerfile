@@ -1,20 +1,34 @@
-FROM ubuntu:20.04
+FROM ubuntu:22.04
 
-WORKDIR /vpn
 ENV DEBIAN_FRONTEND=noninteractive
 
-COPY scripts/requirements.txt ./
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        netcat python3 python3-pip openvpn gnupg iproute2 iputils-ping procps \
-        haproxy postgresql-client git jq ssh && \
-    pip3 install --no-cache-dir -r requirements.txt && \
+        netcat \
+        python3 \
+        python3-pip \
+        openvpn \
+        gnupg \
+        iproute2 \
+        iputils-ping \
+        procps \
+        haproxy \
+        postgresql-client \
+        git \
+        jq \
+        ssh && \
     rm -rf /var/lib/apt/lists/*
 
-COPY scripts/dial.py scripts/seal.py scripts/diag.sh scripts/db_targets.json ./
-COPY vpn_configs/ /vpn/vpn_configs/
-COPY vpn_profiles/ /vpn/vpn_profiles/
-COPY secrets/ /vpn/secrets/
-COPY scripts/entrypoint.sh /vpn/entrypoint.sh
+WORKDIR /vpn
 
-CMD ["bash", "/vpn/entrypoint.sh"]
+COPY scripts/requirements.txt ./
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+COPY scripts/ ./
+COPY vpn_configs/ vpn_profiles/ secrets/ ./
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
+  CMD bash /vpn/healthcheck.sh
+
+RUN chmod +x ./entrypoint.sh
+CMD ["/vpn/entrypoint.sh"]

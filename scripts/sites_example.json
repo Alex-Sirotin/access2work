@@ -1,0 +1,4 @@
+[
+  { "name": "site1", "host": "site.example.com"},
+  { "name": "site2", "host": "site2.sample.net", "port": "12345"}
+]

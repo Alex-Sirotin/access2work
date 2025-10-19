@@ -8,9 +8,10 @@ CONTAINER_NAME    ?= access2work_container
 SEAL_MODE         ?= normal     # normal | force | dryrun
 
 VOLUMES = \
-	-v $(PWD)/vpn_configs:/vpn/vpn_configs \
-	-v $(PWD)/vpn_profiles:/vpn/vpn_profiles \
-	-v $(PWD)/secrets:/vpn/secrets
+	-v $(PWD)/vpn_configs:$(VPN_CONFIG_DIR) \
+	-v $(PWD)/vpn_profiles:$(VPN_PROFILE_DIR) \
+	-v $(PWD)/secrets:$(VPN_SECRET_DIR) \
+	-v ~/.ssh:/root/ssh:ro
 
 DB_PORT_FLAGS := $(shell jq -r '.[] | "-p \(.port):\(.port)"' scripts/db_targets.json | xargs)
 
@@ -25,20 +26,25 @@ seal:
 	fi
 	docker run --rm --env-file .env \
 		-e SEAL_MODE=$(SEAL_MODE) \
-		$(VOLUMES) $(IMAGE_NAME) python3 /vpn/seal.py
+		$(VOLUMES) \
+		$(IMAGE_NAME) python3 /vpn/seal.py
 
 run:
 	-docker rm -f $(CONTAINER_NAME) 2>/dev/null || true
 	docker run -d --name $(CONTAINER_NAME) \
 		--env-file .env \
 		--cap-add=NET_ADMIN --device /dev/net/tun \
-		-v $(PWD)/vpn_configs:/vpn/vpn_configs \
-		-v $(PWD)/vpn_profiles:/vpn/vpn_profiles \
-		-v $(PWD)/secrets:/vpn/secrets \
+		$(VOLUMES) \
 		-p $(GIT_PROXY_PORT):$(GIT_PROXY_PORT) \
-        $(DB_PORT_FLAGS) \
+		$(DB_PORT_FLAGS) \
+		-p 80:80 \
 		-p 443:443 \
 		$(IMAGE_NAME)
+
+wait:
+	@echo "⏳ Ожидание готовности контейнера..."
+	@timeout 90 bash -c 'until [ "$$(docker inspect -f {{.State.Health.Status}} $(CONTAINER_NAME))" = "healthy" ]; do sleep 2; done'
+	@echo "✅ Контейнер $(CONTAINER_NAME) полностью готов"
 
 stop:
 	@if docker ps -a --format '{{.Names}}' | grep -q "^$(CONTAINER_NAME)$$"; then \
@@ -78,7 +84,7 @@ logs:
 ps:
 	docker ps -a | grep $(CONTAINER_NAME) || echo "❌ Контейнер $(CONTAINER_NAME) не найден"
 
-rebuild: clean build seal run logs status
+rebuild: clean build seal run wait logs status
 
 help:
 	@echo "📦 Makefile цели:"

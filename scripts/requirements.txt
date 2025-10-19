@@ -2,3 +2,4 @@ python-dotenv
 pyotp
 requests
 psutil
+pydantic-settings

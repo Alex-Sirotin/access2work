@@ -5,22 +5,23 @@ import time
 from pathlib import Path
 import pyotp
 import requests
-from dotenv import load_dotenv
 import psutil
+from config import settings
 
-load_dotenv()
-
-MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
-OTP_VALIDITY = int(os.getenv("OTP_VALIDITY", "30"))
-CONFIG_DIR = os.getenv("VPN_CONFIG_DIR", "/vpn/vpn_configs")
-PROFILE_DIR = os.getenv("VPN_PROFILE_DIR", "/vpn/vpn_profiles")
-SECRET_DIR = os.getenv("VPN_SECRET_DIR", "/vpn/secrets")
-LOG_PATH = os.getenv("LOG_PATH", "/vpn/secrets/vpn_connect.log")
-ENABLE_LOG = os.getenv("ENABLE_LOG", "true").lower() == "true"
-STOP_ON_FAILURE = os.getenv("STOP_ON_FAILURE", "true").lower() == "true"
-VPN_CONNECT_DELAY = int(os.getenv("VPN_CONNECT_DELAY", "10"))
-OPENVPN_RETRY = os.getenv("OPENVPN_RETRY", "1")
-OPENVPN_RETRY_DELAY = os.getenv("OPENVPN_RETRY_DELAY", "2")
+MAX_RETRIES = settings.MAX_RETRIES
+OTP_VALIDITY = settings.OTP_VALIDITY
+CONFIG_DIR = settings.VPN_CONFIG_DIR
+PROFILE_DIR = settings.VPN_PROFILE_DIR
+SECRET_DIR = settings.VPN_SECRET_DIR
+LOG_PATH = settings.LOG_PATH
+ENABLE_LOG = settings.ENABLE_LOG
+STOP_ON_FAILURE = settings.STOP_ON_FAILURE
+VPN_CONNECT_DELAY = settings.VPN_CONNECT_DELAY
+OPENVPN_RETRY = settings.OPENVPN_RETRY
+OPENVPN_RETRY_DELAY = settings.OPENVPN_RETRY_DELAY
+FALLBACK_LOG = settings.FALLBACK_LOG
+GPG_PASSPHRASE = settings.GPG_PASSPHRASE
+HOSTS_DIR = settings.HOSTS_DIR
 
 def log_event(message):
     print(message)
@@ -29,14 +30,13 @@ def log_event(message):
             with open(LOG_PATH, "a") as log:
                 log.write(message + "\n")
         except Exception as e:
-            fallback_path = "/vpn/secrets/fallback.log"
             print(f"⚠️ Не удалось записать лог в {LOG_PATH}: {e}")
-            print(f"📄 Пишем в резервный лог: {fallback_path}")
+            print(f"📄 Пишем в резервный лог: {FALLBACK_LOG}")
             try:
-                with open(fallback_path, "a") as fallback:
+                with open(FALLBACK_LOG, "a") as fallback:
                     fallback.write(message + "\n")
             except Exception as e2:
-                print(f"❌ Ошибка записи в fallback.log: {e2}")
+                print(f"❌ Ошибка записи в {FALLBACK_LOG}: {e2}")
 
 def load_vpn_configs():
     configs = []
@@ -59,13 +59,12 @@ def decrypt_secret(path):
         log_event(f"❌ SecretPath не найден: {path}")
         return None
     if path.endswith(".gpg"):
-        passphrase = os.getenv("GPG_PASSPHRASE")
-        if not passphrase:
+        if not GPG_PASSPHRASE:
             log_event("❌ GPG_PASSPHRASE не задан в .env")
             return None
         result = subprocess.run(
             ["gpg", "--quiet", "--batch", "--yes", "--passphrase-fd", "0", "--decrypt", path],
-            input=passphrase,
+            input=GPG_PASSPHRASE,
             capture_output=True,
             text=True
         )
@@ -177,12 +176,12 @@ def inject_hosts(file_path=f"{SECRET_DIR}/extra_hosts.txt"):
     try:
         with open(file_path) as f:
             lines = [line.strip() for line in f if line.strip() and not line.startswith("#")]
-        with open("/etc/hosts", "a") as hosts:
+        with open(HOSTS_DIR, "a") as hosts:
             for line in lines:
                 hosts.write(line + "\n")
-        log_event(f"📌 Добавлено {len(lines)} записей в /etc/hosts")
+        log_event(f"📌 Добавлено {len(lines)} записей в {HOSTS_DIR}")
     except Exception as e:
-        log_event(f"❌ Ошибка при добавлении в /etc/hosts: {e}")
+        log_event(f"❌ Ошибка при добавлении в {HOSTS_DIR}: {e}")
 
 def main():
     vpns = load_vpn_configs()
@@ -190,7 +189,7 @@ def main():
         log_event("❌ Нет доступных VPN-конфигов — завершение")
         return
     inject_hosts()
-    subprocess.run(["cat", "/etc/hosts"])
+    subprocess.run(["cat", HOSTS_DIR])
     for i, vpn in enumerate(vpns):
         success = connect_vpn(vpn, i)
         if not success and STOP_ON_FAILURE:

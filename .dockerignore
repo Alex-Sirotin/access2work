@@ -8,3 +8,23 @@ __pycache__/
 *.bak
 *.tmp
 .env
+
+# Кэш и временные каталоги
+*.cache
+.cache/
+tmp/
+logs/
+
+# Python tooling
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile*
+docker-compose*.yml

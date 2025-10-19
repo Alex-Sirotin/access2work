@@ -5,3 +5,5 @@
 /.vscode
 /secrets
 /verify
+scripts/db_targets.json
+scripts/sites.json

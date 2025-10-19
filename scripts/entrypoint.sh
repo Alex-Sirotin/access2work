@@ -2,95 +2,33 @@
 set -e
 
 echo "🔒 Запуск VPN (dial.py)"
-python3 /vpn/dial.py > /vpn/secrets/dial.log 2>&1 || echo "⚠️ dial.py завершился с ошибкой"
+echo "🔒 Запуск VPN (dial.py)" >> "$LOG_PATH"
+python3 /vpn/dial.py
+rc=$?
+if [ $rc -ne 0 ]; then
+  echo "⚠️ dial.py завершился с ошибкой: код $rc" | tee -a "$LOG_PATH"
+  exit $rc
+fi
+echo "✅ dial.py завершился успешно" >> "$LOG_PATH"
 
-# Путь к конфигу БД
-DB_CONFIG="/vpn/db_targets.json"
-HAPROXY_CFG="/etc/haproxy/haproxy.cfg"
-JIRA_PORT="443"
-JIRA_HOST="jira.tektorg.ru"
-GITLAB_HTTPS_PORT="443"
-GITLAB_HOST="gitlab.tektorg.ru"
+if [ -d /root/ssh ]; then
+    echo "🔑 Настройка SSH-ключей из /root/ssh" >> "$LOG_PATH"
+    cp -r /root/ssh /root/.ssh
+    chown -R root:root /root/.ssh
+    chmod 600 /root/.ssh/* || true
+    chmod 644 /root/.ssh/*.pub /root/.ssh/known_hosts* || true
 
-echo "📄 Генерация haproxy.cfg"
-echo "global
-    log stdout format raw daemon
-
-defaults
-    log     global
-    mode    tcp
-    timeout connect 5s
-    timeout client  30s
-    timeout server  30s
-" > "$HAPROXY_CFG"
-
-# GitLab SSH
-if [[ -n "$GIT_PROXY_PORT" && -n "$GITLAB" ]]; then
-    echo "
-frontend gitlab_ssh
-    bind *:$GIT_PROXY_PORT
-    default_backend gitlab_ssh_backend
-
-backend gitlab_ssh_backend
-    server gitlab ${GITLAB} check
-" >> "$HAPROXY_CFG"
-    echo "➕ GitLab SSH: $GIT_PROXY_PORT → $GITLAB"
+    echo "📁 Содержимое /root/.ssh:" >> "$LOG_PATH"
+    ls -l /root/.ssh >> "$LOG_PATH"
 fi
 
-# PostgreSQL из db_targets.json
-if [[ -f "$DB_CONFIG" ]]; then
-    jq -c '.[]' "$DB_CONFIG" | while read -r db; do
-        name=$(echo "$db" | jq -r '.name')
-        remote_host=$(echo "$db" | jq -r '.remote_host')
-        remote_port=$(echo "$db" | jq -r '.remote_port')
-        port=$(echo "$db" | jq -r '.port')
+echo "📄 Генерация haproxy.cfg через proxy.py"
+echo "📄 Генерация haproxy.cfg через proxy.py" >> "$LOG_PATH"
+python3 /vpn/proxy.py
 
-        if [[ -z "$remote_host" || -z "$remote_port" || -z "$port" ]]; then
-            echo "⚠️ [$name] Пропущен — неполные данные"
-            continue
-        fi
-
-        echo "
-frontend ${name}_pg
-    bind *:$port
-    default_backend ${name}_pg_backend
-
-backend ${name}_pg_backend
-    server ${name}_pg $remote_host:$remote_port check
-" >> "$HAPROXY_CFG"
-        echo "➕ [$name] PostgreSQL: $port → $remote_host:$remote_port"
-    done
-else
-    echo "⚠️ Конфигурация БД не найдена: $DB_CONFIG"
-fi
-
-# HTTPS сайты (Jira, GitLab)
-if [[ -n "$JIRA_PORT" && -n "$JIRA_HOST" ]]; then
-    echo "
-frontend jira_https
-    bind *:$JIRA_PORT
-    default_backend jira_backend
-
-backend jira_backend
-    server jira $JIRA_HOST:443 check
-" >> "$HAPROXY_CFG"
-    echo "➕ Jira HTTPS: $JIRA_PORT → $JIRA_HOST:443"
-fi
-
-if [[ -n "$GITLAB_HTTPS_PORT" && -n "$GITLAB_HOST" ]]; then
-    echo "
-frontend gitlab_https
-    bind *:$GITLAB_HTTPS_PORT
-    default_backend gitlab_backend
-
-backend gitlab_backend
-    server gitlab $GITLAB_HOST:443 check
-" >> "$HAPROXY_CFG"
-    echo "➕ GitLab HTTPS: $GITLAB_HTTPS_PORT → $GITLAB_HOST:443"
-fi
-
-echo "📄 haproxy.cfg:"
-cat "$HAPROXY_CFG"
+echo "📄 haproxy.cfg:" >> "$LOG_PATH"
+cat "$HAPROXY_CFG" >> "$LOG_PATH"
 
 echo "✅ HAProxy запущен — контейнер активен"
-exec haproxy -f /etc/haproxy/haproxy.cfg
+echo "✅ HAProxy запущен — контейнер активен" >> "$LOG_PATH"
+exec haproxy -f "$HAPROXY_CFG"

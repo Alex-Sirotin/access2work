@@ -1,0 +1,23 @@
+services:
+  access2work:
+    container_name: access2work_container
+    image: access2work
+    build:
+      context: .
+    env_file:
+      - .env
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./vpn_configs:/vpn/vpn_configs
+      - ./vpn_profiles:/vpn/vpn_profiles
+      - ./secrets:/vpn/secrets
+      - C:/Users/ship/.ssh:/root/.ssh:ro
+    ports:
+      - "${GIT_PROXY_PORT}:${GIT_PROXY_PORT}"
+      - "15401:54301"
+      - "15402:54302"
+      - "15410:54310"
+    restart: unless-stopped

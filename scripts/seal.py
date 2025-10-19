@@ -4,15 +4,15 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 import pyotp
+from config import settings
 
-SECRETS_DIR = Path("/vpn/secrets")
-CONFIGS_DIR = Path("/vpn/vpn_configs")
-LOG_PATH = SECRETS_DIR / "vpn_seal.log"
-
-SEAL_MODE = os.getenv("SEAL_MODE", "normal").lower()
+CONFIGS_DIR = Path(settings.VPN_CONFIG_DIR)
+SECRETS_DIR = Path(settings.VPN_SECRET_DIR)
+LOG_PATH = Path(settings.SEAL_LOG_PATH)
+SEAL_MODE = settings.SEAL_MODE
+GPG_PASSPHRASE = settings.GPG_PASSPHRASE
 FORCE = SEAL_MODE == "force"
 DRYRUN = SEAL_MODE == "dryrun"
-GPG_PASSPHRASE = os.getenv("GPG_PASSPHRASE")
 
 def log(msg):
     print(msg)
