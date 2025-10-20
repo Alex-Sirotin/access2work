@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+import socket
 
 from config import settings
 
@@ -11,12 +12,20 @@ GITLAB_HOST = settings.GITLAB_HOST
 GIT_PROXY_PORT = settings.GIT_PROXY_PORT
 SITES_CONFIG = settings.SITES_CONFIG
 
+def is_port_open(host, port, timeout=2):
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
 config = [
     "global",
     "    log stdout format raw daemon",
     "",
     "defaults",
     "    log     global",
+    "    option tcplog",
     "    mode    tcp",
     "    timeout connect 5s",
     "    timeout client  30s",
@@ -32,7 +41,7 @@ if GIT_PROXY_PORT and GITLAB_HOST:
         f"    default_backend gitlab_ssh_backend",
         "",
         f"backend gitlab_ssh_backend",
-        f"    server gitlab {GITLAB_HOST} check",
+        f"    server gitlab {GITLAB_HOST} ",
         ""
     ]
 
@@ -52,7 +61,7 @@ if os.path.exists(DB_CONFIG):
                 f"    default_backend {name}_pg_backend",
                 "",
                 f"backend {name}_pg_backend",
-                f"    server {name}_pg {remote_host}:{remote_port} check",
+                f"    server {name}_pg {remote_host}:{remote_port} ",
                 ""
             ]
          
@@ -77,39 +86,52 @@ for site in sites:
         if host.startswith("*."):
             domain = host[2:]
             # HTTP
-            http_acls.append(f"    acl host_{name} hdr(host) -m end {domain}")
-            http_use.append(f"    use_backend {name}_http_be if host_{name}")
-            backends += [
-                f"backend {name}_http_be",
-                "    mode http",
-                f"    server {name} {domain}:80 check",
-                ""
-            ]
+            if is_port_open(host, 80):
+                http_acls.append(f"    acl host_{name} hdr(host) -m end {domain}")
+                http_use.append(f"    use_backend {name}_http_be if host_{name}")
+                backends += [
+                    f"backend {name}_http_be",
+                    "    mode http",
+                    f"    server {name} {domain}:80 ",
+                    ""
+                ]
+            else:
+                print(f"⚠️ HTTP порт 80 недоступен для {host} — backend {name}_http_be не будет добавлен")
             # HTTPS
-            https_use.append(f"    use_backend {name}_https_be if {{ req.ssl_sni -m end {domain} }}")
-            backends += [
-                f"backend {name}_https_be",
-                "    mode tcp",
-                f"    server {name} {domain}:443 check",
-                ""
-            ]
+            # if is_port_open(host, 443):
+                https_use.append(f"    use_backend {name}_https_be if {{ req.ssl_sni -m end {domain} }}")
+                backends += [
+                    f"backend {name}_https_be",
+                    "    mode tcp",
+                    f"    server {name} {domain}:443 ",
+                    ""
+                ]
+            # else:
+            #     print(f"⚠️ HTTP порт 443 недоступен для {host} — backend {name}_https_be не будет добавлен")
         else:
             # обычный точный хост
-            http_acls.append(f"    acl host_{name} hdr(host) -i {host}")
-            http_use.append(f"    use_backend {name}_http_be if host_{name}")
-            backends += [
-                f"backend {name}_http_be",
-                "    mode http",
-                f"    server {name} {host}:80 check",
-                ""
-            ]
-            https_use.append(f"    use_backend {name}_https_be if {{ req.ssl_sni -i {host} }}")
-            backends += [
-                f"backend {name}_https_be",
-                "    mode tcp",
-                f"    server {name} {host}:443 check",
-                ""
-            ]
+            if is_port_open(host, 80):
+                http_acls.append(f"    acl host_{name} hdr(host) -i {host}")
+                http_use.append(f"    use_backend {name}_http_be if host_{name}")
+                backends += [
+                    f"backend {name}_http_be",
+                    "    mode http",
+                    f"    server {name} {host}:80 ",
+                    ""
+                ]
+            else:
+                print(f"⚠️ HTTP порт 80 недоступен для {host} — backend {name}_http_be не будет добавлен")
+
+            # if is_port_open(host, 443):
+                https_use.append(f"    use_backend {name}_https_be if {{ req.ssl_sni -i {host} }}")
+                backends += [
+                    f"backend {name}_https_be",
+                    "    mode tcp",
+                    f"    server {name} {host}:443 ",
+                    ""
+                ]
+            # else:
+            #     print(f"⚠️ HTTP порт 443 недоступен для {host} — backend {name}_https_be не будет добавлен")
 
 # Добавляем фронтенды для http/https
 config += [
@@ -125,11 +147,27 @@ config += [
     "    tcp-request inspect-delay 5s",
     "    tcp-request content accept if { req.ssl_hello_type 1 }",
     *https_use,
+    "    default_backend reject_https",
+    "",
+    "backend reject_https",
+    "    mode tcp",
+    "    tcp-request content reject",
     ""
 ]
 
 # Добавляем все backend'и
 config += backends
+
+config += [
+    "frontend stats_in",
+    "   bind *:9100",
+    "   mode http",
+    "   stats enable",
+    "   stats uri /haproxy_stats",
+    "   stats realm Haproxy\ Statistics",
+    "   stats auth admin:password",
+    ""
+]
 
 # Запись в haproxy.cfg
 try:
