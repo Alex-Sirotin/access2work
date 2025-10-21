@@ -3,7 +3,7 @@ set -e
 
 echo "🔒 Запуск VPN (dial.py)"
 echo "🔒 Запуск VPN (dial.py)" >> "$LOG_PATH"
-python3 /vpn/dial.py
+python3 "/vpn/scripts/dial.py"
 rc=$?
 if [ $rc -ne 0 ]; then
   echo "⚠️ dial.py завершился с ошибкой: код $rc" | tee -a "$LOG_PATH"
@@ -22,13 +22,16 @@ if [ -d /root/ssh ]; then
     ls -l /root/.ssh >> "$LOG_PATH"
 fi
 
-echo "📄 Генерация haproxy.cfg через proxy.py"
-echo "📄 Генерация haproxy.cfg через proxy.py" >> "$LOG_PATH"
-python3 /vpn/proxy.py
+# echo "📄 Генерация haproxy.cfg через proxy.py"
+# echo "📄 Генерация haproxy.cfg через proxy.py" >> "$LOG_PATH"
+# python3 /vpn/scripts/proxy.py
 
-echo "📄 haproxy.cfg:" >> "$LOG_PATH"
-cat "$HAPROXY_CFG" >> "$LOG_PATH"
+# echo "📄 haproxy.cfg:" >> "$LOG_PATH"
+# cat "$HAPROXY_CFG" >> "$LOG_PATH"
 
-echo "✅ HAProxy запущен — контейнер активен"
-echo "✅ HAProxy запущен — контейнер активен" >> "$LOG_PATH"
-exec haproxy -f "$HAPROXY_CFG"
+# echo "✅ HAProxy запущен — контейнер активен"
+# echo "✅ HAProxy запущен — контейнер активен" >> "$LOG_PATH"
+# exec haproxy -f "$HAPROXY_CFG"
+
+echo "⏸ Контейнер запущен, ожидание остановки..." >> "$LOG_PATH"
+tail -f /dev/null

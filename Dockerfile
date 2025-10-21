@@ -12,7 +12,6 @@ RUN apt-get update && \
         iproute2 \
         iputils-ping \
         procps \
-        haproxy \
         postgresql-client \
         git \
         jq \
@@ -21,14 +20,18 @@ RUN apt-get update && \
 
 WORKDIR /vpn
 
-COPY scripts/requirements.txt ./
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Устанавливаем Python-зависимости
+COPY app/scripts/requirements.txt ./scripts/
+RUN pip3 install --no-cache-dir -r ./scripts/requirements.txt
 
-COPY scripts/ ./
-COPY vpn_configs/ vpn_profiles/ secrets/ ./
+COPY app/scripts ./scripts/
+COPY app/config ./config/
+COPY app/vpn ./vpn/
 
+# Healthcheck
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
-  CMD bash /vpn/healthcheck.sh
+  CMD bash ./scripts/healthcheck.sh
 
-RUN chmod +x ./entrypoint.sh
-CMD ["/vpn/entrypoint.sh"]
+# Entrypoint
+RUN chmod +x ./scripts/*.sh
+CMD ["/vpn/scripts/entrypoint.sh"]

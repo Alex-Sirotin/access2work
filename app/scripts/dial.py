@@ -10,18 +10,21 @@ from config import settings
 
 MAX_RETRIES = settings.MAX_RETRIES
 OTP_VALIDITY = settings.OTP_VALIDITY
-CONFIG_DIR = settings.VPN_CONFIG_DIR
-PROFILE_DIR = settings.VPN_PROFILE_DIR
-SECRET_DIR = settings.VPN_SECRET_DIR
-LOG_PATH = settings.LOG_PATH
-ENABLE_LOG = settings.ENABLE_LOG
-STOP_ON_FAILURE = settings.STOP_ON_FAILURE
 VPN_CONNECT_DELAY = settings.VPN_CONNECT_DELAY
 OPENVPN_RETRY = settings.OPENVPN_RETRY
 OPENVPN_RETRY_DELAY = settings.OPENVPN_RETRY_DELAY
-FALLBACK_LOG = settings.FALLBACK_LOG
 GPG_PASSPHRASE = settings.GPG_PASSPHRASE
 HOSTS_DIR = settings.HOSTS_DIR
+
+ENABLE_LOG = settings.ENABLE_LOG
+STOP_ON_FAILURE = settings.STOP_ON_FAILURE
+FALLBACK_LOG = settings.FALLBACK_LOG
+LOG_PATH = settings.LOG_PATH
+
+VPN_CONFIG = settings.VPN_CONFIG
+SECRET_DIR = settings.VPN_SECRET_DIR
+PROFILE_DIR = settings.VPN_PROFILE_DIR
+EXTRA_HOSTS_CONFIG = settings.EXTRA_HOSTS_CONFIG
 
 def log_event(message):
     print(message)
@@ -40,16 +43,18 @@ def log_event(message):
 
 def load_vpn_configs():
     configs = []
-    for file in Path(CONFIG_DIR).glob("*.json"):
-        try:
-            with open(file) as f:
-                config = json.load(f)
-                config["Name"] = file.stem
-                config["SecretPath"] = str(Path(SECRET_DIR) / f"{file.stem}.gpg")
-                config["Order"] = int(config.get("Order", 9999))
-                configs.append(config)
-        except Exception as e:
-            log_event(f"[{file.name}] ❌ Ошибка чтения: {e}")
+    config_file = Path(VPN_CONFIG)
+    
+    try:
+        with open(config_file) as f:
+            data = json.load(f)
+            for entry in data:
+                entry["SecretPath"] = str(Path(SECRET_DIR) / f"{entry['Name']}.gpg")
+                entry["Order"] = int(entry.get("Order", 9999))
+                configs.append(entry)
+    except Exception as e:
+        log_event(f"[{config_file.name}] ❌ Ошибка чтения: {e}")
+    
     sorted_configs = sorted(configs, key=lambda c: c["Order"])
     log_event(f"📋 Порядок подключения: {[c['Name'] for c in sorted_configs]}")
     return sorted_configs
@@ -169,7 +174,7 @@ def connect_vpn(vpn, index):
     log_event(f"[{vpn['Name']}] ❌ Ошибка после {MAX_RETRIES} попыток")
     return False
 
-def inject_hosts(file_path=f"{SECRET_DIR}/extra_hosts.txt"):
+def inject_hosts(file_path=f"{EXTRA_HOSTS_CONFIG}"):
     if not Path(file_path).exists():
         log_event(f"⚠️ Файл hosts не найден: {file_path}")
         return

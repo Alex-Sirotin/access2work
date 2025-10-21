@@ -23,16 +23,7 @@ ip route show || echo "❌ ip route не сработал"
 echo -e "\n🔒 VPN-интерфейсы:"
 ip link show | grep tun || echo "❌ tun-интерфейс не найден"
 
-# rinetd
-echo -e "\n📋 Конфигурация rinetd:"
-cat /etc/rinetd.conf || echo "❌ rinetd.conf не найден"
-
-echo -e "\n📡 Слушающие порты rinetd:"
-ss -tnlp | grep rinetd || echo "❌ rinetd не слушает"
-
 echo -e "\n🧪 Проверка PostgreSQL-баз из db_targets.json"
-
-DB_CONFIG="/vpn/db_targets.json"
 
 if [[ ! -f "$DB_CONFIG" ]]; then
     echo "❌ Конфигурация БД не найдена: $DB_CONFIG"
@@ -61,18 +52,18 @@ jq -c '.[]' "$DB_CONFIG" | while read -r db; do
         || echo "❌ [$name] Недоступно"
 done
 
-# Проверка Jira
-echo -e "\n🔍 Jira:"
-if wget --no-check-certificate --timeout=5 --tries=1 https://jira.tektorg.ru -O /dev/null >/dev/null 2>&1; then
-    echo "✅ Jira доступна"
-else
-    echo "❌ Jira недоступна"
-fi
+# # Проверка Jira
+# echo -e "\n🔍 Jira:"
+# if wget --no-check-certificate --timeout=5 --tries=1 https://jira.tektorg.ru -O /dev/null >/dev/null 2>&1; then
+#     echo "✅ Jira доступна"
+# else
+#     echo "❌ Jira недоступна"
+# fi
 
-# Проверка GitLab
-echo -e "\n🔍 GitLab TCP-порт 443:"
-if nc -z -w 3 gitlab.tektorg.ru 443; then
-    echo "✅ GitLab TCP-порт 443 доступен"
-else
-    echo "❌ GitLab TCP-порт 443 недоступен"
-fi
+# # Проверка GitLab
+# echo -e "\n🔍 GitLab TCP-порт 443:"
+# if nc -z -w 3 gitlab.tektorg.ru 443; then
+#     echo "✅ GitLab TCP-порт 443 доступен"
+# else
+#     echo "❌ GitLab TCP-порт 443 недоступен"
+# fi

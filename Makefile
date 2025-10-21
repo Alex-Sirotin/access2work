@@ -8,12 +8,11 @@ CONTAINER_NAME    ?= access2work_container
 SEAL_MODE         ?= normal     # normal | force | dryrun
 
 VOLUMES = \
-	-v $(PWD)/vpn_configs:$(VPN_CONFIG_DIR) \
-	-v $(PWD)/vpn_profiles:$(VPN_PROFILE_DIR) \
-	-v $(PWD)/secrets:$(VPN_SECRET_DIR) \
+	-v $(PWD)/app/config:/vpn/config \
+	-v $(PWD)/app/vpn:/vpn/vpn \
+	-v $(PWD)/app/secrets:/vpn/secrets \
+	-v $(PWD)/logs:/vpn/logs \
 	-v ~/.ssh:/root/ssh:ro
-
-DB_PORT_FLAGS := $(shell jq -r '.[] | "-p \(.port):\(.port)"' scripts/db_targets.json | xargs)
 
 build:
 	docker build -t $(IMAGE_NAME) .
@@ -27,7 +26,7 @@ seal:
 	docker run --rm --env-file .env \
 		-e SEAL_MODE=$(SEAL_MODE) \
 		$(VOLUMES) \
-		$(IMAGE_NAME) python3 /vpn/seal.py
+		$(IMAGE_NAME) python3 /vpn/scripts/seal.py
 
 run:
 	-docker rm -f $(CONTAINER_NAME) 2>/dev/null || true
@@ -35,11 +34,6 @@ run:
 		--env-file .env \
 		--cap-add=NET_ADMIN --device /dev/net/tun \
 		$(VOLUMES) \
-		-p $(GIT_PROXY_PORT):$(GIT_PROXY_PORT) \
-		$(DB_PORT_FLAGS) \
-		-p 9100:9100 \
-		-p 80:80 \
-		-p 443:443 \
 		$(IMAGE_NAME)
 
 wait:
@@ -55,7 +49,7 @@ stop:
 	fi
 
 clean:
-	rm -f secrets/*.log secrets/*.gpg secrets/*.auth
+	rm -f ./logs/* ./app/secrets/*
 
 status:
 	@if ! docker ps --format '{{.Names}}' | grep -q "^$(CONTAINER_NAME)$$"; then \
@@ -72,7 +66,7 @@ diag:
 	@if ! docker ps --format '{{.Names}}' | grep -q "^$(CONTAINER_NAME)$$"; then \
 		echo "❌ Контейнер $(CONTAINER_NAME) не запущен"; \
 	else \
-		docker exec $(CONTAINER_NAME) bash /vpn/diag.sh; \
+		docker exec $(CONTAINER_NAME) bash /vpn/scripts/diag.sh; \
 	fi
 
 logs:

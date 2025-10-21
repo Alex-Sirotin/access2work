@@ -6,7 +6,7 @@ from datetime import datetime
 import pyotp
 from config import settings
 
-CONFIGS_DIR = Path(settings.VPN_CONFIG_DIR)
+VPN_CONFIG = Path(settings.VPN_CONFIG)
 SECRETS_DIR = Path(settings.VPN_SECRET_DIR)
 LOG_PATH = Path(settings.SEAL_LOG_PATH)
 SEAL_MODE = settings.SEAL_MODE
@@ -37,20 +37,25 @@ def encrypt_and_save(secret, output_path):
     if result.returncode != 0:
         raise RuntimeError(f"GPG error: {result.stderr.strip()}")
 
-def main():
-    log(f"🔐 Запуск seal.py — SEAL_MODE={SEAL_MODE}")
-    if not GPG_PASSPHRASE and not DRYRUN:
-        log("❌ GPG_PASSPHRASE не задан — остановка")
+def process_vpn_configs():
+    config_file = VPN_CONFIG
+
+    try:
+        with open(config_file) as f:
+            vpn_list = json.load(f)
+    except Exception as e:
+        log(f"❌ Ошибка чтения {config_file.name}: {e}")
         return
 
-    for config_path in CONFIGS_DIR.glob("*.json"):
-        profile_name = config_path.stem
+    for config in vpn_list:
+        profile_name = config.get("Name")
+        if not profile_name:
+            log("⚠️ Пропущен конфиг без поля Name")
+            continue
+
         gpg_path = SECRETS_DIR / f"{profile_name}.gpg"
 
         try:
-            with open(config_path) as f:
-                config = json.load(f)
-
             otp_secret = config.get("otp_secret")
             if not otp_secret and "OtpAuthUrl" in config:
                 try:
@@ -79,10 +84,13 @@ def main():
         except Exception as e:
             log(f"❌ {profile_name}: Ошибка — {e}")
 
-    if DRYRUN:
-        log("🔍 Завершён dry-run: ни один файл не был создан.")
-    else:
-        log("✅ Завершено шифрование всех доступных конфигов.")
+def main():
+    log(f"🔐 Запуск seal.py — SEAL_MODE={SEAL_MODE}")
+    if not GPG_PASSPHRASE and not DRYRUN:
+        log("❌ GPG_PASSPHRASE не задан — остановка")
+        return
+
+    process_vpn_configs()
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,16 @@
+[
+  {
+    "Order": 10,
+    "Name": "VPN1",
+    "Username": "<username>",
+    "Prefix": "<prefix>",
+    "OtpAuthUrl": "otpauth://totp/<name>:?secret=<secret>&issuer=<issuer>"
+  },
+  {
+    "Order": 20,
+    "Name": "VPN2",
+    "Username": "<username>",
+    "Prefix": "<prefix>",
+    "OtpAuthUrl": "otpauth://totp/<name>:?secret=<secret>&issuer=<issuer>"
+  }
+]
