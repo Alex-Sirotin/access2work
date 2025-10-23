@@ -1,69 +1,66 @@
 #!/bin/bash
-set -e
 
 echo "🧪 Диагностика — $(date)"
 
-# Загрузка переменных из .env
-source /vpn/.env 2>/dev/null || echo "⚠️ .env не найден или не загружен"
+# Счётчики
+db_total=0; db_sql_ok=0; db_remote_ok=0; db_local_ok=0
+repo_total=0; repo_remote_ok=0; repo_local_ok=0
 
-# Проверка базовых утилит
-echo -e "\n🔧 Проверка утилит:"
-for cmd in nc psql rinetd openvpn; do
-    command -v $cmd >/dev/null && echo "✅ $cmd установлен" || echo "❌ $cmd не найден"
+# 🔧 Утилиты
+echo -e "\n🔧 Утилиты:"
+for cmd in nc psql openvpn; do
+    command -v $cmd >/dev/null && echo "✅ $cmd" || echo "❌ $cmd"
 done
 
-# Интерфейсы и маршруты
-echo -e "\n📡 Интерфейсы:"
-ip -brief address || echo "❌ ip addr не сработал"
+# 📡 Сеть
+echo -e "\n📡 Сеть:"
+ip -brief address || echo "❌ ip addr"
+ip route show || echo "❌ ip route"
+ip link show | grep tun || echo "❌ tun не найден"
 
-echo -e "\n🧭 Маршруты:"
-ip route show || echo "❌ ip route не сработал"
+echo "🔑 ENV: DB_CONFIG=$DB_CONFIG, REPO_CONFIG=$REPO_CONFIG"
 
-# VPN-интерфейсы
-echo -e "\n🔒 VPN-интерфейсы:"
-ip link show | grep tun || echo "❌ tun-интерфейс не найден"
-
-echo -e "\n🧪 Проверка PostgreSQL-баз из db_targets.json"
-
-if [[ ! -f "$DB_CONFIG" ]]; then
-    echo "❌ Конфигурация БД не найдена: $DB_CONFIG"
-    exit 1
+if [[ $(jq length "$DB_CONFIG") -eq 0 ]]; then
+    echo "⚠️ [$DB_CONFIG] пустой или не содержит массив"
 fi
 
+if [[ $(jq length "$REPO_CONFIG") -eq 0 ]]; then
+    echo "⚠️ [$REPO_CONFIG] пустой или не содержит массив"
+fi
+
+# 🧪 Базы данных
+[[ -f "$DB_CONFIG" ]] || { echo "❌ Нет $DB_CONFIG"; exit 1; }
 jq -c '.[]' "$DB_CONFIG" | while read -r db; do
-    name=$(echo "$db" | jq -r '.name')
-    host=$(echo "$db" | jq -r '.remote_host')
-    port=$(echo "$db" | jq -r '.remote_port')
-    database=$(echo "$db" | jq -r '.database')
+    ((db_total++))
+    rhost=$(echo "$db" | jq -r '.remote_host')
+    rport=$(echo "$db" | jq -r '.remote_port')
+    lport=$(echo "$db" | jq -r '.port')
+    dbname=$(echo "$db" | jq -r '.database')
     user=$(echo "$db" | jq -r '.user')
-    password=$(echo "$db" | jq -r '.password')
+    pass=$(echo "$db" | jq -r '.password')
 
-    echo -e "\n🔍 [$name] Проверка подключения к $database@$host:$port"
+    nc -z "$rhost" "$rport" && ((db_remote_ok++))
+    nc -z localhost "$lport" && ((db_local_ok++))
 
-    if [[ -z "$password" || "$password" == "null" ]]; then
-        echo "❌ [$name] Пароль не задан в конфиге"
-        continue
+    if [[ -n "$pass" && "$pass" != "null" ]]; then
+        export PGPASSWORD="$pass"
+        psql -h "$rhost" -p "$rport" -U "$user" -d "$dbname" -c "SELECT 1;" >/dev/null 2>&1 && ((db_sql_ok++))
     fi
-
-    export PGPASSWORD="$password"
-
-    psql -h "$host" -p "$port" -U "$user" -d "$database" -c "SELECT 1;" \
-        && echo "✅ [$name] Доступно" \
-        || echo "❌ [$name] Недоступно"
 done
 
-# # Проверка Jira
-# echo -e "\n🔍 Jira:"
-# if wget --no-check-certificate --timeout=5 --tries=1 https://jira.tektorg.ru -O /dev/null >/dev/null 2>&1; then
-#     echo "✅ Jira доступна"
-# else
-#     echo "❌ Jira недоступна"
-# fi
+# 🧪 Репозитории
+[[ -f "$REPO_CONFIG" ]] || { echo "❌ Нет $REPO_CONFIG"; exit 1; }
+jq -c '.[]' "$REPO_CONFIG" | while read -r repo; do
+    ((repo_total++))
+    rhost=$(echo "$repo" | jq -r '.remote_host')
+    rport=$(echo "$repo" | jq -r '.remote_port')
+    lport=$(echo "$repo" | jq -r '.port')
 
-# # Проверка GitLab
-# echo -e "\n🔍 GitLab TCP-порт 443:"
-# if nc -z -w 3 gitlab.tektorg.ru 443; then
-#     echo "✅ GitLab TCP-порт 443 доступен"
-# else
-#     echo "❌ GitLab TCP-порт 443 недоступен"
-# fi
+    nc -z "$rhost" "$rport" && ((repo_remote_ok++))
+    nc -z localhost "$lport" && ((repo_local_ok++))
+done
+
+# 📊 Сводка
+echo -e "\n📊 Сводка:"
+printf "📦 БД: %d/%d SQL | %d удалённых | %d локальных\n" "$db_sql_ok" "$db_total" "$db_remote_ok" "$db_local_ok"
+printf "📁 Репо: %d/%d удалённых | %d локальных\n" "$repo_remote_ok" "$repo_total" "$repo_local_ok"

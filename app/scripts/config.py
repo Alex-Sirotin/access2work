@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     VPN_SECRET_DIR: str = "/vpn/secrets"
     GPG_PASSPHRASE: str = "your-secret-passphrase"
     SEAL_MODE: str = "normal"
+    PROXY_MODE: str = "normal"
     STOP_ON_FAILURE: bool = True
     VPN_CONNECT_DELAY: int = 15
     OPENVPN_RETRY: str = "1"
@@ -26,9 +27,11 @@ class Settings(BaseSettings):
     ENABLE_LOG: bool = True
     LOG_PATH: str = "/vpn/logs/connect.log"
     SEAL_LOG_PATH: str = "/vpn/logs/seal.log"
+    PROXY_LOG_PATH: str = "/vpn/logs/proxy.log"
     FALLBACK_LOG: str = "/vpn/logs/fallback.log"
 
     DB_CONFIG: str = "/vpn/config/db_targets.json"
+    REPO_CONFIG: str = "/vpn/config/repos.json"
     EXTRA_HOSTS_CONFIG: str = "/vpn/config/extra_hosts.txt"
     # SITES_CONFIG: str = "sites.json"
     GITLAB_HOST: str = "gitlab.tektorg.ru"

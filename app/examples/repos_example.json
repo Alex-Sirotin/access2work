@@ -1,0 +1,9 @@
+[
+    {
+    "name": "<repo>",
+    "port": "<port>",
+    "remote_host": "<host>",
+    "remote_port": "<port>",
+    "remote_user": "<user>"
+    }
+]

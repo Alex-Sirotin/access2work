@@ -15,7 +15,9 @@ RUN apt-get update && \
         postgresql-client \
         git \
         jq \
-        ssh && \
+        ssh \
+        autossh \
+        psmisc && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /vpn
@@ -24,6 +26,7 @@ WORKDIR /vpn
 COPY app/scripts/requirements.txt ./scripts/
 RUN pip3 install --no-cache-dir -r ./scripts/requirements.txt
 
+# Копируем скрипты и конфиги
 COPY app/scripts ./scripts/
 COPY app/config ./config/
 COPY app/vpn ./vpn/
